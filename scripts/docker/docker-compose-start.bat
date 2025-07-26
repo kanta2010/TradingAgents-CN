@@ -23,7 +23,6 @@ echo 🚀 启动TradingAgents服务栈...
 REM 启动核心服务 (MongoDB, Redis, Redis Commander)
 echo 📊 启动核心数据库服务...
 docker-compose up -d mongodb redis redis-commander
-
 if %errorlevel% equ 0 (
     echo ✅ 核心服务启动成功
 ) else (
