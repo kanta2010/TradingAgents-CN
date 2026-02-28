@@ -49,18 +49,83 @@ def clean_cache_files(force_clean=False):
     """
 
     project_root = Path(__file__).parent.parent
-    cache_dirs = list(project_root.rglob("__pycache__"))
+
+    # 安全的缓存目录搜索，避免递归错误
+    cache_dirs = []
+    try:
+        # 限制搜索深度，避免循环符号链接问题
+        for root, dirs, files in os.walk(project_root):
+            # 限制搜索深度为5层，避免过深递归
+            depth = root.replace(str(project_root), '').count(os.sep)
+            if depth >= 5:
+                dirs[:] = []  # 不再深入搜索
+                continue
+
+            # 跳过已知的问题目录
+            dirs[:] = [d for d in dirs if d not in {'.git', 'node_modules', '.venv', 'env', '.tox'}]
+
+            if '__pycache__' in dirs:
+                cache_dirs.append(Path(root) / '__pycache__')
+
+    except (OSError, RecursionError) as e:
+        logger.warning(f"⚠️ 缓存搜索遇到问题: {e}")
+        logger.info(f"💡 跳过缓存清理，继续启动应用")
 
     if not cache_dirs:
         logger.info(f"✅ 无需清理缓存文件")
         return
 
-    # 检查环境变量是否禁用清理
-    import os
-    skip_clean = os.getenv('SKIP_CACHE_CLEAN', 'false').lower() == 'true'
+    # 检查环境变量是否禁用清理（使用强健的布尔值解析）
+    try:
+        from tradingagents.config.env_utils import parse_bool_env
+        skip_clean = parse_bool_env('SKIP_CACHE_CLEAN', False)
+    except ImportError:
+        # 回退到原始方法
+        skip_clean = os.getenv('SKIP_CACHE_CLEAN', 'false').lower() == 'true'
 
     if skip_clean and not force_clean:
         logger.info(f"⏭️ 跳过缓存清理（SKIP_CACHE_CLEAN=true）")
+        return
+
+    project_root = Path(__file__).parent.parent
+
+    # 安全地查找缓存目录，避免递归深度问题
+    cache_dirs = []
+    try:
+        # 只在特定目录中查找，避免深度递归
+        search_dirs = [
+            project_root / "web",
+            project_root / "tradingagents",
+            project_root / "tests",
+            project_root / "scripts",
+            project_root / "examples"
+        ]
+
+        for search_dir in search_dirs:
+            if search_dir.exists():
+                try:
+                    # 使用有限深度的搜索，最多3层深度
+                    for root, dirs, files in os.walk(search_dir):
+                        # 限制搜索深度
+                        level = len(Path(root).relative_to(search_dir).parts)
+                        if level > 3:
+                            dirs.clear()  # 不再深入搜索
+                            continue
+
+                        if Path(root).name == "__pycache__":
+                            cache_dirs.append(Path(root))
+
+                except (RecursionError, OSError) as e:
+                    logger.warning(f"跳过目录 {search_dir}: {e}")
+                    continue
+
+    except Exception as e:
+        logger.warning(f"查找缓存目录时出错: {e}")
+        logger.info(f"✅ 跳过缓存清理")
+        return
+
+    if not cache_dirs:
+        logger.info(f"✅ 无需清理缓存文件")
         return
 
     if not force_clean:

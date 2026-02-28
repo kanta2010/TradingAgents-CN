@@ -594,7 +594,7 @@ def get_user_selections():
             "选择您的LLM分析师智能体进行分析 | Select your LLM analyst agents for the analysis"
         )
     )
-    selected_analysts = select_analysts()
+    selected_analysts = select_analysts(selected_ticker)
     console.print(
         f"[green]已选择的分析师 | Selected analysts:[/green] {', '.join(analyst.value for analyst in selected_analysts)}"
     )
@@ -1056,8 +1056,14 @@ def run_analysis():
         config["llm_provider"] = "dashscope"
     elif "deepseek" in selected_llm_provider_name or "DeepSeek" in selections["llm_provider"]:
         config["llm_provider"] = "deepseek"
-    elif "openai" in selected_llm_provider_name:
+    elif "openai" in selected_llm_provider_name and "自定义" not in selections["llm_provider"]:
         config["llm_provider"] = "openai"
+    elif "自定义openai端点" in selected_llm_provider_name or "自定义" in selections["llm_provider"]:
+        config["llm_provider"] = "custom_openai"
+        # 从环境变量获取自定义URL
+        custom_url = os.getenv('CUSTOM_OPENAI_BASE_URL', selections["backend_url"])
+        config["custom_openai_base_url"] = custom_url
+        config["backend_url"] = custom_url
     elif "anthropic" in selected_llm_provider_name:
         config["llm_provider"] = "anthropic"
     elif "google" in selected_llm_provider_name:
@@ -1313,6 +1319,11 @@ def run_analysis():
                     if "sentiment_report" not in completed_analysts:
                         ui.show_success("💭 情感分析完成")
                         completed_analysts.add("sentiment_report")
+                        # 调试信息（写入日志文件）
+                        logger.info(f"首次显示情感分析完成提示，已完成分析师: {completed_analysts}")
+                    else:
+                        # 调试信息（写入日志文件）
+                        logger.debug(f"跳过重复的情感分析完成提示，已完成分析师: {completed_analysts}")
 
                     message_buffer.update_report_section(
                         "sentiment_report", chunk["sentiment_report"]
@@ -1325,6 +1336,16 @@ def run_analysis():
                         )
 
                 if "news_report" in chunk and chunk["news_report"]:
+                    # 只在第一次完成时显示提示
+                    if "news_report" not in completed_analysts:
+                        ui.show_success("📰 新闻分析完成")
+                        completed_analysts.add("news_report")
+                        # 调试信息（写入日志文件）
+                        logger.info(f"首次显示新闻分析完成提示，已完成分析师: {completed_analysts}")
+                    else:
+                        # 调试信息（写入日志文件）
+                        logger.debug(f"跳过重复的新闻分析完成提示，已完成分析师: {completed_analysts}")
+
                     message_buffer.update_report_section(
                         "news_report", chunk["news_report"]
                     )
@@ -1763,7 +1784,10 @@ def data_config(
     Configure data directory paths
     """
     from tradingagents.config.config_manager import config_manager
-    from tradingagents.dataflows.config import get_data_dir, set_data_dir
+
+    # 使用 config_manager 的方法
+    get_data_dir = config_manager.get_data_dir
+    set_data_dir = config_manager.set_data_dir
     
     logger.info(f"\n[bold blue]📁 数据目录配置 | Data Directory Configuration[/bold blue]")
     

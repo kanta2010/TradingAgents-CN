@@ -7,6 +7,13 @@ import datetime
 
 # 导入日志模块
 from tradingagents.utils.logging_manager import get_logger
+
+# 导入用户活动记录器
+try:
+    from ..utils.user_activity_logger import user_activity_logger
+except ImportError:
+    user_activity_logger = None
+
 logger = get_logger('web')
 
 
@@ -21,9 +28,9 @@ def render_analysis_form():
     # 调试信息（只在没有分析运行时记录，避免重复）
     if not st.session_state.get('analysis_running', False):
         if cached_config:
-            logger.info(f"📊 [配置恢复] 使用缓存配置: {cached_config}")
+            logger.debug(f"📊 [配置恢复] 使用缓存配置: {cached_config}")
         else:
-            logger.info("📊 [配置恢复] 使用默认配置")
+            logger.debug("📊 [配置恢复] 使用默认配置")
 
     # 创建表单
     with st.form("analysis_form", clear_on_submit=False):
@@ -113,11 +120,27 @@ def render_analysis_form():
         
         # 分析师团队选择
         st.markdown("### 👥 选择分析师团队")
-        
+
         col1, col2 = st.columns(2)
-        
-        # 获取缓存的分析师选择
+
+        # 获取缓存的分析师选择和市场类型
         cached_analysts = cached_config.get('selected_analysts', ['market', 'fundamentals']) if cached_config else ['market', 'fundamentals']
+        cached_market_type = cached_config.get('market_type', 'A股') if cached_config else 'A股'
+
+        # 检测市场类型是否发生变化
+        market_type_changed = cached_market_type != market_type
+
+        # 如果市场类型发生变化，需要调整分析师选择
+        if market_type_changed:
+            if market_type == "A股":
+                # 切换到A股：移除社交媒体分析师
+                cached_analysts = [analyst for analyst in cached_analysts if analyst != 'social']
+                if len(cached_analysts) == 0:
+                    cached_analysts = ['market', 'fundamentals']  # 确保至少有默认选择
+            else:
+                # 切换到非A股：如果只有基础分析师，添加社交媒体分析师
+                if 'social' not in cached_analysts and len(cached_analysts) <= 2:
+                    cached_analysts.append('social')
 
         with col1:
             market_analyst = st.checkbox(
@@ -126,11 +149,23 @@ def render_analysis_form():
                 help="专注于技术面分析、价格趋势、技术指标"
             )
 
-            social_analyst = st.checkbox(
-                "💭 社交媒体分析师",
-                value='social' in cached_analysts,
-                help="分析社交媒体情绪、投资者情绪指标"
-            )
+            # 始终显示社交媒体分析师checkbox，但在A股时禁用
+            if market_type == "A股":
+                # A股市场：显示但禁用社交媒体分析师
+                social_analyst = st.checkbox(
+                    "💭 社交媒体分析师",
+                    value=False,
+                    disabled=True,
+                    help="A股市场暂不支持社交媒体分析（国内数据源限制）"
+                )
+                st.info("💡 A股市场暂不支持社交媒体分析，因为国内数据源限制")
+            else:
+                # 非A股市场：正常显示社交媒体分析师
+                social_analyst = st.checkbox(
+                    "💭 社交媒体分析师",
+                    value='social' in cached_analysts,
+                    help="分析社交媒体情绪、投资者情绪指标"
+                )
 
         with col2:
             news_analyst = st.checkbox(
@@ -144,7 +179,7 @@ def render_analysis_form():
                 value='fundamentals' in cached_analysts,
                 help="分析财务数据、公司基本面、估值水平"
             )
-        
+
         # 收集选中的分析师
         selected_analysts = []
         if market_analyst:
@@ -292,6 +327,26 @@ def render_analysis_form():
             )
         except Exception as e:
             logger.warning(f"⚠️ [配置持久化] 保存失败: {e}")
+
+        # 记录用户分析请求活动
+        if user_activity_logger:
+            try:
+                user_activity_logger.log_analysis_request(
+                    symbol=stock_symbol,
+                    market=market_type,
+                    analysis_date=str(analysis_date),
+                    research_depth=research_depth,
+                    analyst_team=[a[0] for a in selected_analysts],
+                    details={
+                        'include_sentiment': include_sentiment,
+                        'include_risk_assessment': include_risk_assessment,
+                        'has_custom_prompt': bool(custom_prompt),
+                        'form_source': 'analysis_form'
+                    }
+                )
+                logger.debug(f"📊 [用户活动] 已记录分析请求: {stock_symbol}")
+            except Exception as e:
+                logger.warning(f"⚠️ [用户活动] 记录失败: {e}")
 
         logger.info(f"📊 [配置缓存] 表单配置已保存: {form_config}")
 
